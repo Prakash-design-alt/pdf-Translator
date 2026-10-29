@@ -36,6 +36,12 @@ button.secondary{background:#fff;color:var(--text);border:1px solid var(--border
 .hidden{display:none!important}
 iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;margin-top:12px}
 .note{font-size:13px;color:var(--muted);margin-top:10px}
+.overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:999}
+.loadbox{background:#fff;border-radius:12px;padding:28px 32px;width:min(380px,90vw);text-align:center}
+.spinner{width:46px;height:46px;border:4px solid #e3e6ec;border-top-color:var(--accent);border-radius:50%;margin:0 auto 14px;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+#loadText{font-size:14px;color:var(--text);margin-bottom:12px;min-height:20px}
+.footer{margin-top:24px;padding:18px 16px;text-align:center;font-size:13px;color:var(--muted);border-top:1px solid var(--border);background:var(--card)}
 </style>
 </head>
 <body>
@@ -86,8 +92,6 @@ iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;
       <button id="start">Translate PDF</button>
       <span id="status" style="font-size:14px;color:var(--muted)"></span>
     </div>
-    <div class="bar"><div id="bar"></div></div>
-    <div id="log">Ready.</div>
   </section>
 
   <section class="card hidden" id="results">
@@ -97,6 +101,21 @@ iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;
     <iframe id="preview"></iframe>
   </section>
 </main>
+
+<div id="loading" class="overlay hidden">
+  <div class="loadbox">
+    <div class="spinner"></div>
+    <div id="loadText">Working...</div>
+    <div class="bar"><div id="bar"></div></div>
+  </div>
+</div>
+
+<footer class="footer">
+  <div class="wrap">
+    <span>© <span id="yr">2026</span> Next2pdf. Built by Prakash Budhathoki.</span>
+  </div>
+</footer>
+<script>document.getElementById('yr').textContent = new Date().getFullYear();</script>
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
@@ -152,12 +171,11 @@ function setFile(f) {
   $("fileName").textContent = `${f.name} (${(f.size / 1048576).toFixed(2)} MB)`;
 }
 
-function log(msg) {
-  const el = $("log");
-  el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
-  el.scrollTop = el.scrollHeight;
+function log(msg) { console.log(`[${new Date().toLocaleTimeString()}] ${msg}`); }
+function setStatus(msg) {
+  $("status").textContent = msg;
+  $("loadText").textContent = msg;
 }
-function setStatus(msg) { $("status").textContent = msg; }
 
 /* ---------- Page analysis: find text lines with exact positions ---------- */
 function textLines(content, vp) {
@@ -354,8 +372,18 @@ async function run() {
   const langs = [...document.querySelectorAll("#langs input:checked")].map(i => i.value);
   if (!langs.length) return alert("Select at least one target language.");
 
+  const sourceNames = { eng: "English", ara: "Arabic", urd: "Urdu", fra: "French", deu: "German",
+    spa: "Spanish", hin: "Hindi", rus: "Russian", chi_sim: "Chinese (Simplified)" };
+  const sourceName = sourceNames[$("ocrLang").value];
+  if (langs.includes(sourceName)) {
+    return alert(`The PDF is set to ${sourceName}, so ${sourceName} can't be a target. ` +
+                 `Untick it, or change "Language of the PDF" to the PDF's real language.`);
+  }
+
   $("start").disabled = true;
   $("results").classList.add("hidden");
+  $("loading").classList.remove("hidden");
+  setStatus("Starting...");
   $("downloads").innerHTML = "";
   $("previewTabs").innerHTML = "";
   $("preview").removeAttribute("src");
@@ -427,6 +455,7 @@ async function run() {
     alert("Something went wrong: " + e.message);
   } finally {
     $("start").disabled = false;
+    $("loading").classList.add("hidden");
   }
 }
 
