@@ -10,7 +10,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script type="module">
-  import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
+  import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.7.2';
   env.allowLocalModels = false;
   env.useBrowserCache = true;
   window.Transformers = { pipeline };
@@ -41,6 +41,8 @@ a.dl{border:1px solid var(--border);border-radius:8px;padding:10px 18px;color:va
 .bar div{height:100%;width:0;background:var(--accent);transition:width .3s}
 .hidden{display:none!important}
 .note{font-size:13px;color:var(--muted);margin-top:10px;word-break:break-word}
+#pdfPreview{width:100%;height:75vh;min-height:520px;border:1px solid var(--border);border-radius:10px;background:#fff;margin-top:14px}
+.preview-title{font-size:14px;font-weight:600;margin-top:18px}
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:999}
 .loadbox{background:#fff;border-radius:12px;padding:28px 32px;width:min(420px,90vw);text-align:center}
 .spinner{width:46px;height:46px;border:4px solid #e3e6ec;border-top-color:var(--accent);border-radius:50%;margin:0 auto 14px;animation:spin .8s linear infinite}
@@ -52,7 +54,7 @@ a.dl{border:1px solid var(--border);border-radius:8px;padding:10px 18px;color:va
 </head>
 <body>
 <header>
-  <h1>PDF Translator <span class="badge">Local AI, no limits</span></h1>
+  <h1>PDF Translator <span class="badge">AI translation in your browser</span></h1>
   <p>Translates the text in your PDF and keeps the original layout, tables, and images. Runs in your browser.</p>
 </header>
 
@@ -104,6 +106,8 @@ a.dl{border:1px solid var(--border);border-radius:8px;padding:10px 18px;color:va
     <div class="row" id="downloads"></div>
     <p class="note" id="previewNote"></p>
     <div class="row" id="previewTabs"></div>
+    <div class="preview-title">PDF preview</div>
+    <iframe id="pdfPreview" title="Translated PDF preview" class="hidden"></iframe>
   </section>
 </main>
 
@@ -155,8 +159,8 @@ const DIRECT = {
 };
 // Fallback for pairs without a small model (slower, larger)
 const FALLBACK_MODEL = "Xenova/m2m100_418M";
-const BATCH_SMALL = 8;
-const BATCH_FALLBACK = 4;
+const BATCH_SMALL = 3;
+const BATCH_FALLBACK = 1;
 const RTL_LANGS = ["ar", "ur"];
 const FONT = `"Noto Sans", "Noto Sans Arabic", "Noto Sans SC", "Noto Sans JP", "Noto Sans Devanagari", sans-serif`;
 const RENDER_SCALE = 2;
@@ -164,8 +168,9 @@ const RENDER_SCALE = 2;
 let pdfFile = null;
 let ocrWorker = null;
 let ocrWorkerLang = null;
-let previewWin = null;
 let failedMsgs = [];
+let generatedUrls = [];
+let isTranslating = false;
 const modelCache = new Map();
 
 /* ---------- UI ---------- */
@@ -255,10 +260,14 @@ async function runStep(step, texts, label) {
   const out = [];
   for (let i = 0; i < texts.length; i += size) {
     const batch = texts.slice(i, i + size);
+    setStatus(`${label}: translating lines ${i + 1}-${Math.min(i + size, texts.length)} of ${texts.length}...`);
     const opts = step.fallback ? { src_lang: LANG_MAP[step.src].m2m, tgt_lang: LANG_MAP[step.tgt].m2m } : {};
-    const res = await pipe(batch, opts);
-    for (const r of res) out.push(r.translation_text);
+    const raw = await pipe(batch, opts);
+    const res = Array.isArray(raw) ? raw : [raw];
+    for (const r of res) out.push(r.translation_text || batch[out.length % size]);
     setStatus(`${label}: ${Math.min(i + size, texts.length)}/${texts.length} lines`);
+    // Give the browser time to repaint progress and keep the page responsive.
+    await new Promise(resolve => setTimeout(resolve, 0));
   }
   return out;
 }
@@ -442,11 +451,12 @@ async function run() {
   setProgress(0);
   setStatus("Starting...");
 
-  previewWin = window.open("", "_blank");
-  if (previewWin) {
-    previewWin.document.title = "Translating...";
-    previewWin.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Translating your PDF, please wait...</p>';
-  }
+  if (isTranslating) return;
+  isTranslating = true;
+  generatedUrls.forEach(url => URL.revokeObjectURL(url));
+  generatedUrls = [];
+  $("pdfPreview").classList.add("hidden");
+  $("pdfPreview").removeAttribute("src");
 
   try {
     await loadFonts();
@@ -458,8 +468,15 @@ async function run() {
     const pages = [];
     for (let i = 1; i <= n; i++) {
       setStatus(`Reading page ${i}/${n}...`);
-      pages.push(await analyzePage(pdf, i, mode, srcCode, failedMsgs));
+      try {
+        pages.push(await analyzePage(pdf, i, mode, srcCode, failedMsgs));
+      } catch (pageErr) {
+        console.error(`Failed to read page ${i}`, pageErr);
+        failedMsgs.push(`Page ${i} could not be processed: ${pageErr.message}`);
+        throw new Error(`Could not process page ${i} of ${n}: ${pageErr.message}`);
+      }
       setProgress(0.2 * i / n);
+      await new Promise(resolve => setTimeout(resolve, 0));
     }
     if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; ocrWorkerLang = null; }
 
@@ -467,6 +484,10 @@ async function run() {
     const allLines = pages.flatMap(p => p.lines);
     const baseName = pdfFile.name.replace(/\.pdf$/i, "");
     const blobs = {};
+
+    if (!allLines.some(L => /\p{L}/u.test(L.text || ""))) {
+      throw new Error("No readable text was found in this PDF. If it is a scanned document, set OCR mode to Always OCR and choose the correct PDF language, then try again.");
+    }
 
     for (let li = 0; li < targets.length; li++) {
       const tgt = targets[li];
@@ -478,10 +499,8 @@ async function run() {
       try {
         translated = await translateTexts(allLines.map(L => L.text), srcCode, tgt, `Translating into ${langName}`);
       } catch (err) {
-        if (/AI library/.test(err.message)) throw err;
-        console.warn("Translation failed for", langName, err);
-        failedMsgs.push(`${langName}: ${err.message}`);
-        translated = allLines.map(L => L.text);
+        console.error(`Translation failed for ${langName}`, err);
+        throw new Error(`Translation into ${langName} failed. The translation model could not load or run. Check your internet connection, refresh the page, and try again. Details: ${err.message}`);
       }
       allLines.forEach((L, i) => { L.tr = L.tr || {}; L.tr[tgt] = translated[i]; });
       setProgress(start + span * 0.7);
@@ -493,6 +512,7 @@ async function run() {
         setStatus(`Building ${langName} PDF: page ${P.n}/${pages.length}`);
         const canvas = drawPage(P, tgt);
         const img = canvas.toDataURL("image/jpeg", 0.88);
+        canvas.width = 1; canvas.height = 1;
         const orient = P.width > P.height ? "landscape" : "portrait";
         if (!doc) doc = new jsPDF({ unit: "pt", format: [P.width, P.height], orientation: orient });
         else doc.addPage([P.width, P.height], orient);
@@ -508,13 +528,15 @@ async function run() {
   } catch (e) {
     console.error(e);
     setStatus("Failed");
-    if (previewWin && !previewWin.closed) previewWin.close();
     $("previewNote").textContent = "Translation failed: " + e.message;
     $("results").classList.remove("hidden");
-    alert("An error occurred during translation: " + e.message);
+    $("pdfPreview").classList.add("hidden");
+    $("pdfPreview").removeAttribute("src");
+    alert("Translation failed: " + e.message);
   } finally {
     $("start").disabled = false;
     $("loading").classList.add("hidden");
+    isTranslating = false;
   }
 }
 
@@ -524,6 +546,7 @@ function showDownloads(blobs) {
   let firstUrl = null;
   Object.entries(blobs).forEach(([langName, { blob, name }]) => {
     const url = URL.createObjectURL(blob);
+    generatedUrls.push(url);
     if (!firstUrl) firstUrl = url;
 
     const a = document.createElement("a");
@@ -535,20 +558,28 @@ function showDownloads(blobs) {
 
     const v = document.createElement("button");
     v.className = "secondary";
-    v.textContent = `View ${langName} PDF`;
-    v.onclick = () => window.open(url, "_blank");
+    v.textContent = `Preview ${langName} PDF`;
+    v.onclick = () => {
+      $("pdfPreview").src = url;
+      $("pdfPreview").classList.remove("hidden");
+      $("previewNote").textContent = `Previewing ${langName}. Use the download button to save a copy.`;
+    };
     tabs.append(v);
+
+    const open = document.createElement("button");
+    open.className = "secondary";
+    open.textContent = `Open ${langName} in new tab`;
+    open.onclick = () => window.open(url, "_blank", "noopener");
+    tabs.append(open);
   });
   $("results").classList.remove("hidden");
-
-  if (previewWin && !previewWin.closed) {
-    previewWin.location.href = firstUrl;
-    $("previewNote").textContent = "Your translated PDF opened in a new tab. Use the buttons below for other languages.";
-  } else {
-    $("previewNote").textContent = "Click a View button to open your translated PDF in a new tab.";
+  if (firstUrl) {
+    $("pdfPreview").src = firstUrl;
+    $("pdfPreview").classList.remove("hidden");
+    $("previewNote").textContent = "Translation finished. The first translated PDF is shown below; use the buttons to preview another language or open it in a new tab.";
   }
   if (failedMsgs.length) {
-    $("previewNote").textContent += ` Note: some text could not be translated and kept its original text. Reason: ${failedMsgs[0]}`;
+    $("previewNote").textContent += ` Note: ${failedMsgs[0]}`;
   }
 }
 </script>
