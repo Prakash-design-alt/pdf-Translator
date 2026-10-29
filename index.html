@@ -3,9 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PDF Translator with OCR</title>
+<title>PDF Translator (Layout Preserved)</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans&family=Noto+Sans+Arabic&family=Noto+Sans+SC&family=Noto+Sans+JP&family=Noto+Sans+Devanagari&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--text:#1d2330;--muted:#6b7280;--accent:#2563eb;--border:#e3e6ec}
 *{box-sizing:border-box}
@@ -24,29 +27,21 @@ select{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:
 .langs{display:flex;flex-wrap:wrap;gap:8px}
 .chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:6px 12px;font-size:14px;cursor:pointer;user-select:none;color:var(--text);margin:0}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
-button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer;text-decoration:none;display:inline-block}
 button:disabled{opacity:.5;cursor:not-allowed}
 button.secondary{background:#fff;color:var(--text);border:1px solid var(--border)}
 .bar{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin-top:12px}
 .bar div{height:100%;width:0;background:var(--accent);transition:width .3s}
 #log{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0f172a;color:#cbd5e1;border-radius:8px;padding:12px;height:160px;overflow:auto;white-space:pre-wrap;margin-top:12px}
 .hidden{display:none!important}
-.tabs{display:flex;gap:8px;flex-wrap:wrap}
-.page{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}
-.page h3{margin:0 0 10px;font-size:15px}
-.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;margin-left:8px;font-weight:500}
-.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
-@media(max-width:700px){.cols{grid-template-columns:1fr}}
-.col h4{margin:0 0 6px;font-size:13px;color:var(--muted);font-weight:600}
-.txt{white-space:pre-wrap;font-size:14px;line-height:1.6;background:#fafafa;border:1px solid var(--border);border-radius:8px;padding:12px;max-height:320px;overflow:auto}
-.rtl{direction:rtl;text-align:right}
-@media print{header,.controls,.tabs,#results .row{display:none!important}.card{border:0;padding:0}}
+iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;margin-top:12px}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
 </style>
 </head>
 <body>
 <header>
-  <h1>PDF Translator with Auto OCR</h1>
-  <p>Upload a PDF, choose target languages, and get page-by-page translations. Scanned pages are read with OCR automatically.</p>
+  <h1>PDF Translator (Layout Preserved)</h1>
+  <p>Translates the text inside your PDF and keeps the original page layout, images, and tables. Scanned pages are read with OCR automatically.</p>
 </header>
 
 <main>
@@ -88,7 +83,7 @@ button.secondary{background:#fff;color:var(--text);border:1px solid var(--border
     </div>
     <input id="file" type="file" accept="application/pdf" class="hidden">
     <div class="row">
-      <button id="start">Translate</button>
+      <button id="start">Translate PDF</button>
       <span id="status" style="font-size:14px;color:var(--muted)"></span>
     </div>
     <div class="bar"><div id="bar"></div></div>
@@ -96,18 +91,16 @@ button.secondary{background:#fff;color:var(--text);border:1px solid var(--border
   </section>
 
   <section class="card hidden" id="results">
-    <div class="tabs" id="tabs"></div>
-    <div class="row">
-      <button class="secondary" id="dlLang">Download this language (.txt)</button>
-      <button class="secondary" id="dlAll">Download all languages (.txt)</button>
-      <button class="secondary" id="printBtn">Print / Save as PDF</button>
-    </div>
-    <div id="pages"></div>
+    <div class="row" id="downloads"></div>
+    <p class="note">Preview of the translated PDF:</p>
+    <div class="row" id="previewTabs"></div>
+    <iframe id="preview"></iframe>
   </section>
 </main>
 
 <script>
 pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+const { jsPDF } = window.jspdf;
 
 const $ = id => document.getElementById(id);
 
@@ -116,7 +109,6 @@ const SOURCE_CODES = {
   eng: "en-GB", ara: "ar-SA", urd: "ur-PK", fra: "fr-FR", deu: "de-DE",
   spa: "es-ES", hin: "hi-IN", rus: "ru-RU", chi_sim: "zh-CN"
 };
-
 // Display names -> MyMemory target codes
 const TARGET_CODES = {
   "Arabic": "ar-SA", "Urdu": "ur-PK", "French": "fr-FR", "Spanish": "es-ES",
@@ -125,15 +117,15 @@ const TARGET_CODES = {
   "Portuguese": "pt-PT", "Italian": "it-IT", "English": "en-GB"
 };
 const RTL_LANGS = ["Arabic", "Urdu"];
-const MYMEMORY_CHUNK = 450; // MyMemory accepts up to 500 bytes per request
+const FONT = `"Noto Sans", "Noto Sans Arabic", "Noto Sans SC", "Noto Sans JP", "Noto Sans Devanagari", sans-serif`;
+const MYMEMORY_CHUNK = 450;
+const RENDER_SCALE = 2;
 
 let pdfFile = null;
-let results = {};
 let ocrWorker = null;
 let ocrWorkerLang = null;
-let currentLang = null;
 
-/* ---------- UI setup ---------- */
+/* ---------- UI ---------- */
 Object.keys(TARGET_CODES).forEach((lang, i) => {
   const lab = document.createElement("label");
   lab.className = "chip";
@@ -165,40 +157,59 @@ function log(msg) {
   el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
   el.scrollTop = el.scrollHeight;
 }
-
 function setStatus(msg) { $("status").textContent = msg; }
 
-/* ---------- PDF helpers ---------- */
-async function pageText(pdf, n) {
-  const page = await pdf.getPage(n);
-  const content = await page.getTextContent();
-  const lines = [];
-  let cur = null, curY = null;
+/* ---------- Page analysis: find text lines with exact positions ---------- */
+function textLines(content, vp) {
+  const boxes = [];
   for (const it of content.items) {
-    if (!("str" in it)) continue;
-    const y = Math.round(it.transform[5]);
-    if (cur === null || Math.abs(y - curY) > 2) {
-      if (cur !== null) lines.push(cur.trim());
-      cur = "";
-      curY = y;
-    }
-    cur += it.str + (it.hasEOL ? "" : " ");
+    if (!it.str || !it.str.trim()) continue;
+    const t = pdfjsLib.Util.transform(vp.transform, it.transform);
+    boxes.push({ str: it.str, x: t[4], base: t[5], h: Math.hypot(t[2], t[3]), w: it.width * vp.scale });
   }
-  if (cur !== null) lines.push(cur.trim());
-  return lines.filter(Boolean).join("\n");
+  boxes.sort((a, b) => a.base - b.base);
+
+  const groups = [];
+  let cur = null;
+  for (const b of boxes) {
+    if (cur && Math.abs(b.base - cur.base) < cur.h * 0.5) cur.items.push(b);
+    else { if (cur) groups.push(cur); cur = { base: b.base, h: b.h, items: [b] }; }
+  }
+  if (cur) groups.push(cur);
+
+  return groups.map(g => {
+    g.items.sort((a, b) => a.x - b.x);
+    const x0 = g.items[0].x;
+    const x1 = Math.max(...g.items.map(i => i.x + i.w));
+    return {
+      text: g.items.map(i => i.str).join(" ").replace(/\s+/g, " ").trim(),
+      x: x0, w: x1 - x0, base: g.base, h: g.h
+    };
+  });
 }
 
-async function renderPage(pdf, n) {
-  const page = await pdf.getPage(n);
-  const vp = page.getViewport({ scale: 2 });
+function ocrLines(data) {
+  const out = [];
+  for (const b of data.blocks || [])
+    for (const p of b.paragraphs || [])
+      for (const l of p.lines || []) {
+        const text = (l.text || "").trim();
+        if (!text) continue;
+        const { x0, y0, x1, y1 } = l.bbox;
+        const h = y1 - y0;
+        out.push({ text, x: x0, w: x1 - x0, base: y1 - h * 0.2, h });
+      }
+  return out;
+}
+
+async function renderCanvas(page, vp) {
   const canvas = document.createElement("canvas");
-  canvas.width = vp.width;
-  canvas.height = vp.height;
+  canvas.width = Math.floor(vp.width);
+  canvas.height = Math.floor(vp.height);
   await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
   return canvas;
 }
 
-/* ---------- OCR ---------- */
 async function getOcr(lang) {
   if (ocrWorker && ocrWorkerLang === lang) return ocrWorker;
   if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; }
@@ -208,11 +219,22 @@ async function getOcr(lang) {
   return ocrWorker;
 }
 
-async function ocrPage(pdf, n, lang) {
-  const canvas = await renderPage(pdf, n);
-  const worker = await getOcr(lang);
-  const { data } = await worker.recognize(canvas);
-  return data.text.trim();
+async function analyzePage(pdf, n, mode, ocrLang) {
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({ scale: RENDER_SCALE });
+  let lines = textLines(await page.getTextContent(), vp);
+  let method = "text";
+  const textLen = lines.map(l => l.text).join("").replace(/\s/g, "").length;
+  const needsOcr = mode === "force" || (mode === "auto" && textLen < 30);
+  if (needsOcr && mode !== "off") {
+    log(`Page ${n}: running OCR...`);
+    const canvas = await renderCanvas(page, vp);
+    const worker = await getOcr(ocrLang);
+    const { data } = await worker.recognize(canvas, {}, { blocks: true });
+    lines = ocrLines(data);
+    method = "OCR";
+  }
+  return { n, page, vp, lines, method, width: vp.width / RENDER_SCALE, height: vp.height / RENDER_SCALE };
 }
 
 /* ---------- Translation (free MyMemory service, called from the visitor's browser) ---------- */
@@ -222,12 +244,8 @@ function splitText(text, max = MYMEMORY_CHUNK) {
     if (line.length <= max) { pieces.push(line); continue; }
     let cur = "";
     for (const word of line.split(" ")) {
-      if ((cur + " " + word).trim().length > max) {
-        pieces.push(cur.trim());
-        cur = word;
-      } else {
-        cur += " " + word;
-      }
+      if ((cur + " " + word).trim().length > max) { pieces.push(cur.trim()); cur = word; }
+      else cur += " " + word;
     }
     if (cur.trim()) pieces.push(cur.trim());
   }
@@ -254,6 +272,7 @@ async function myMemory(text, langpair) {
 }
 
 async function translate(text, lang, ocrLang) {
+  if (!/\p{L}/u.test(text)) return text; // numbers and symbols stay as they are
   const source = SOURCE_CODES[ocrLang.split("+")[0]] || "en-GB";
   const target = TARGET_CODES[lang];
   const out = [];
@@ -261,6 +280,70 @@ async function translate(text, lang, ocrLang) {
     out.push(chunk.trim() ? await myMemory(chunk, `${source}|${target}`) : "");
   }
   return out.join("\n");
+}
+
+// Run fn over items with a fixed number of parallel workers
+async function mapLimit(items, limit, fn) {
+  let i = 0;
+  await Promise.all(Array.from({ length: limit }, async () => {
+    while (i < items.length) {
+      const idx = i++;
+      await fn(items[idx], idx);
+    }
+  }));
+}
+
+/* ---------- Drawing the translated page ---------- */
+function fitText(ctx, text, size, maxW) {
+  let s = size;
+  ctx.font = `${s}px ${FONT}`;
+  const w = ctx.measureText(text).width;
+  if (w > maxW) {
+    s = Math.max(size * maxW / w, size * 0.45);
+    ctx.font = `${s}px ${FONT}`;
+  }
+  return s;
+}
+
+async function drawTranslatedPage(P, lang) {
+  const canvas = await renderCanvas(P.page, P.vp);
+  const ctx = canvas.getContext("2d");
+  const rtl = RTL_LANGS.includes(lang);
+  const pad = 2;
+
+  // 1. Sample the background color behind each line before erasing anything
+  const boxes = P.lines.map(L => {
+    const x = L.x - pad, y = L.base - L.h * 0.85 - pad;
+    const w = L.w + pad * 2, h = L.h * 1.1 + pad * 2;
+    const px = ctx.getImageData(Math.max(0, Math.floor(x - 3)), Math.max(0, Math.floor(y + h / 2)), 1, 1).data;
+    return { L, x, y, w, h, color: `rgb(${px[0]},${px[1]},${px[2]})` };
+  });
+
+  // 2. Erase original text
+  for (const b of boxes) {
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+  }
+
+  // 3. Draw translated text in the same place
+  ctx.fillStyle = "#111";
+  for (const b of boxes) {
+    const text = b.L.tr && b.L.tr[lang] ? b.L.tr[lang] : b.L.text;
+    const maxW = Math.max(b.L.w, Math.min(b.L.w * 1.3, canvas.width - b.L.x - 10));
+    fitText(ctx, text, b.L.h * 0.9, maxW);
+    ctx.direction = rtl ? "rtl" : "ltr";
+    ctx.textAlign = rtl ? "right" : "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(text, rtl ? b.L.x + maxW : b.L.x, b.L.base);
+  }
+  return canvas;
+}
+
+async function loadFonts() {
+  await Promise.all([
+    "16px 'Noto Sans'", "16px 'Noto Sans Arabic'", "16px 'Noto Sans SC'",
+    "16px 'Noto Sans JP'", "16px 'Noto Sans Devanagari'"
+  ].map(f => document.fonts.load(f).catch(() => {})));
 }
 
 /* ---------- Main pipeline ---------- */
@@ -272,54 +355,71 @@ async function run() {
   if (!langs.length) return alert("Select at least one target language.");
 
   $("start").disabled = true;
-  results = {};
   $("results").classList.add("hidden");
+  $("downloads").innerHTML = "";
+  $("previewTabs").innerHTML = "";
+  $("preview").removeAttribute("src");
   setStatus("Working...");
 
   let total = 0, done = 0;
-  const step = () => { done++; $("bar").style.width = Math.round((done / total) * 100) + "%"; };
+  const step = () => { done++; $("bar").style.width = Math.min(100, Math.round((done / total) * 100)) + "%"; };
 
   try {
+    await loadFonts();
     const pdf = await pdfjsLib.getDocument({ data: await pdfFile.arrayBuffer() }).promise;
     const n = pdf.numPages;
-    total = n + n * langs.length;
-    log(`Opened "${pdfFile.name}" (${n} page${n > 1 ? "s" : ""}).`);
-
-    // Step 1: extract text, OCR where needed
     const mode = $("ocrMode").value;
     const ocrLang = $("ocrLang").value;
+    log(`Opened "${pdfFile.name}" (${n} page${n > 1 ? "s" : ""}).`);
+
+    // Step 1: find text and positions on every page
     const pages = [];
     for (let i = 1; i <= n; i++) {
-      let text = await pageText(pdf, i);
-      let method = "text";
-      const needsOcr = mode === "force" || (mode === "auto" && text.replace(/\s/g, "").length < 30);
-      if (needsOcr && mode !== "off") {
-        log(`Page ${i}: running OCR...`);
-        text = await ocrPage(pdf, i, ocrLang);
-        method = "OCR";
-      }
-      pages.push({ page: i, text, method });
+      setStatus(`Reading page ${i}/${n}`);
+      pages.push(await analyzePage(pdf, i, mode, ocrLang));
       step();
-      setStatus(`Extracted page ${i}/${n}`);
     }
     if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; ocrWorkerLang = null; }
 
-    // Step 2: translate into each language
+    const totalLines = pages.reduce((s, p) => s + p.lines.length, 0);
+    total = pages.length + totalLines * langs.length + pages.length * langs.length;
+    done = pages.length;
+
+    const base = pdfFile.name.replace(/\.pdf$/i, "");
+    const blobs = {};
+
     for (const lang of langs) {
-      results[lang] = [];
-      for (const p of pages) {
-        log(`Translating page ${p.page}/${n} into ${lang}...`);
-        setStatus(`${lang}: page ${p.page}/${n}`);
-        const translated = p.text
-          ? await translate(p.text, lang, ocrLang)
-          : "(no text found on this page)";
-        results[lang].push({ ...p, translated });
+      // Step 2: translate every text line, keeping its position
+      log(`Translating into ${lang} (${totalLines} text lines)...`);
+      await mapLimit(
+        pages.flatMap(p => p.lines.map(L => ({ L, p }))),
+        3,
+        async ({ L }) => {
+          L.tr = L.tr || {};
+          L.tr[lang] = await translate(L.text, lang, ocrLang);
+          step();
+        }
+      );
+
+      // Step 3: draw each page and build the PDF
+      log(`Building ${lang} PDF...`);
+      let doc = null;
+      for (let i = 0; i < pages.length; i++) {
+        const P = pages[i];
+        setStatus(`${lang}: building page ${P.n}/${pages.length}`);
+        const canvas = await drawTranslatedPage(P, lang);
+        const img = canvas.toDataURL("image/jpeg", 0.92);
+        const orient = P.width > P.height ? "landscape" : "portrait";
+        if (!doc) doc = new jsPDF({ unit: "pt", format: [P.width, P.height], orientation: orient });
+        else doc.addPage([P.width, P.height], orient);
+        doc.addImage(img, "JPEG", 0, 0, P.width, P.height);
         step();
       }
+      blobs[lang] = { blob: doc.output("blob"), name: `${base}_${lang}.pdf` };
     }
 
-    renderResults(langs);
-    log("Done.");
+    showDownloads(blobs);
+    log("Done. Your translated PDFs are ready.");
     setStatus("Finished");
   } catch (e) {
     log("Error: " + e.message);
@@ -330,98 +430,29 @@ async function run() {
   }
 }
 
-/* ---------- Results ---------- */
-function renderResults(langs) {
-  const tabs = $("tabs");
-  tabs.innerHTML = "";
-  langs.forEach(lang => {
+function showDownloads(blobs) {
+  const dl = $("downloads");
+  const tabs = $("previewTabs");
+  Object.entries(blobs).forEach(([lang, { blob, name }]) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.textContent = `Download ${lang} PDF`;
+    a.className = "secondary";
+    a.style.cssText = "border:1px solid #e3e6ec;border-radius:8px;padding:10px 18px;color:#1d2330;font-size:14px;text-decoration:none;background:#fff";
+    dl.append(a);
+
     const b = document.createElement("button");
-    b.textContent = lang;
     b.className = "secondary";
-    b.dataset.lang = lang;
-    b.onclick = () => showLang(lang);
+    b.textContent = lang;
+    b.onclick = () => { $("preview").src = url; };
     tabs.append(b);
   });
   $("results").classList.remove("hidden");
-  showLang(langs[0]);
+  const first = Object.values(blobs)[0];
+  if (first) $("preview").src = URL.createObjectURL(first.blob);
 }
-
-function showLang(lang) {
-  currentLang = lang;
-  document.querySelectorAll("#tabs button").forEach(b =>
-    b.classList.toggle("secondary", b.dataset.lang !== lang));
-
-  const box = $("pages");
-  box.innerHTML = "";
-  const rtl = RTL_LANGS.includes(lang);
-
-  results[lang].forEach(p => {
-    const sec = document.createElement("div");
-    sec.className = "page";
-
-    const h = document.createElement("h3");
-    h.textContent = `Page ${p.page}`;
-    const badge = document.createElement("span");
-    badge.className = "badge";
-    badge.textContent = p.method;
-    h.append(badge);
-
-    const cols = document.createElement("div");
-    cols.className = "cols";
-
-    const colA = document.createElement("div");
-    colA.className = "col";
-    colA.innerHTML = "<h4>Original</h4>";
-    const orig = document.createElement("div");
-    orig.className = "txt";
-    orig.textContent = p.text || "(no text)";
-    colA.append(orig);
-
-    const colB = document.createElement("div");
-    colB.className = "col";
-    colB.innerHTML = `<h4>Translation (${lang})</h4>`;
-    const tr = document.createElement("div");
-    tr.className = "txt" + (rtl ? " rtl" : "");
-    tr.textContent = p.translated;
-    colB.append(tr);
-
-    cols.append(colA, colB);
-    sec.append(h, cols);
-    box.append(sec);
-  });
-}
-
-function download(name, content) {
-  const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function baseName() {
-  return (pdfFile ? pdfFile.name : "document").replace(/\.pdf$/i, "");
-}
-
-function formatLang(lang) {
-  return results[lang]
-    .map(p => `--- Page ${p.page} (${p.method}) ---\n${p.translated}`)
-    .join("\n\n");
-}
-
-$("dlLang").onclick = () => {
-  if (currentLang) download(`${baseName()}_${currentLang}.txt`, formatLang(currentLang));
-};
-
-$("dlAll").onclick = () => {
-  const all = Object.keys(results)
-    .map(lang => `=== ${lang} ===\n\n${formatLang(lang)}`)
-    .join("\n\n\n");
-  download(`${baseName()}_all_translations.txt`, all);
-};
-
-$("printBtn").onclick = () => window.print();
 </script>
 </body>
 </html>
