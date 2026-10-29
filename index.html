@@ -141,6 +141,7 @@ const RENDER_SCALE = 2;
 
 let pdfFile = null;
 let previewWin = null;
+let failedMsgs = [];
 let ocrWorker = null;
 let ocrWorkerLang = null;
 
@@ -246,11 +247,19 @@ async function analyzePage(pdf, n, mode, ocrLang) {
   const needsOcr = mode === "force" || (mode === "auto" && textLen < 30);
   if (needsOcr && mode !== "off") {
     log(`Page ${n}: running OCR...`);
-    const canvas = await renderCanvas(page, vp);
-    const worker = await getOcr(ocrLang);
-    const { data } = await worker.recognize(canvas, {}, { blocks: true });
-    lines = ocrLines(data);
-    method = "OCR";
+    try {
+      const canvas = await renderCanvas(page, vp);
+      const worker = await getOcr(ocrLang);
+      const { data } = await worker.recognize(canvas, {}, { blocks: true });
+      lines = ocrLines(data);
+      method = "OCR";
+    } catch (err) {
+      console.warn("OCR failed on page", n, err);
+      failedMsgs.push(`page ${n} OCR: ${err.message}`);
+      ocrWorker = null;
+      ocrWorkerLang = null;
+      method = "OCR failed";
+    }
   }
   return { n, page, vp, lines, method, width: vp.width / RENDER_SCALE, height: vp.height / RENDER_SCALE };
 }
@@ -386,6 +395,7 @@ async function run() {
   setStatus("Starting...");
   $("downloads").innerHTML = "";
   $("previewTabs").innerHTML = "";
+  failedMsgs = [];
   previewWin = window.open("", "_blank");
   if (previewWin) {
     previewWin.document.title = "Translating...";
@@ -428,7 +438,13 @@ async function run() {
         3,
         async ({ L }) => {
           L.tr = L.tr || {};
-          L.tr[lang] = await translate(L.text, lang, ocrLang);
+          try {
+            L.tr[lang] = await translate(L.text, lang, ocrLang);
+          } catch (err) {
+            console.warn("Kept original text:", L.text, err);
+            failedMsgs.push(err.message);
+            L.tr[lang] = L.text;
+          }
           step();
         }
       );
@@ -457,6 +473,8 @@ async function run() {
     log("Error: " + e.message);
     if (previewWin && !previewWin.closed) previewWin.close();
     setStatus("Failed");
+    $("previewNote").textContent = "Translation failed: " + e.message;
+    $("results").classList.remove("hidden");
     alert("Something went wrong: " + e.message);
   } finally {
     $("start").disabled = false;
@@ -493,6 +511,9 @@ function showDownloads(blobs) {
     $("previewNote").textContent = "Your translated PDF opened in a new tab. Use the buttons below to view other languages.";
   } else {
     $("previewNote").textContent = "Click a View button to open your translated PDF in a new tab.";
+  }
+  if (failedMsgs.length) {
+    $("previewNote").textContent += ` Note: ${failedMsgs.length} text part(s) could not be translated and kept their original text. Reason: ${failedMsgs[0]}`;
   }
 }
 </script>
