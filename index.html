@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PDF Translator with OCR</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#1d2330;--muted:#6b7280;--accent:#2563eb;--border:#e3e6ec}
+*{box-sizing:border-box}
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
+header{padding:20px 24px;background:var(--card);border-bottom:1px solid var(--border)}
+h1{margin:0;font-size:20px}
+header p{margin:4px 0 0;color:var(--muted);font-size:14px}
+main{max-width:1000px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
+select{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff}
+.drop{border:2px dashed var(--border);border-radius:12px;padding:28px;text-align:center;cursor:pointer;color:var(--muted)}
+.drop.hover{border-color:var(--accent);background:#eff6ff}
+.drop strong{color:var(--text)}
+.langs{display:flex;flex-wrap:wrap;gap:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border);border-radius:999px;padding:6px 12px;font-size:14px;cursor:pointer;user-select:none;color:var(--text);margin:0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:16px}
+button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px 18px;font-size:14px;cursor:pointer}
+button:disabled{opacity:.5;cursor:not-allowed}
+button.secondary{background:#fff;color:var(--text);border:1px solid var(--border)}
+.bar{height:8px;background:#e5e7eb;border-radius:99px;overflow:hidden;margin-top:12px}
+.bar div{height:100%;width:0;background:var(--accent);transition:width .3s}
+#log{font-family:ui-monospace,Menlo,monospace;font-size:12px;background:#0f172a;color:#cbd5e1;border-radius:8px;padding:12px;height:160px;overflow:auto;white-space:pre-wrap;margin-top:12px}
+.hidden{display:none!important}
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.page{border-top:1px solid var(--border);padding-top:14px;margin-top:14px}
+.page h3{margin:0 0 10px;font-size:15px}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#eef2ff;color:#3730a3;margin-left:8px;font-weight:500}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:700px){.cols{grid-template-columns:1fr}}
+.col h4{margin:0 0 6px;font-size:13px;color:var(--muted);font-weight:600}
+.txt{white-space:pre-wrap;font-size:14px;line-height:1.6;background:#fafafa;border:1px solid var(--border);border-radius:8px;padding:12px;max-height:320px;overflow:auto}
+.rtl{direction:rtl;text-align:right}
+@media print{header,.controls,.tabs,#results .row{display:none!important}.card{border:0;padding:0}}
+</style>
+</head>
+<body>
+<header>
+  <h1>PDF Translator with Auto OCR</h1>
+  <p>Upload a PDF, choose target languages, and get page-by-page translations. Scanned pages are read with OCR automatically.</p>
+</header>
+
+<main>
+  <section class="card controls">
+    <div class="grid">
+      <div>
+        <label for="ocrLang">Language of the PDF</label>
+        <select id="ocrLang">
+          <option value="eng">English</option>
+          <option value="ara">Arabic</option>
+          <option value="urd">Urdu</option>
+          <option value="fra">French</option>
+          <option value="deu">German</option>
+          <option value="spa">Spanish</option>
+          <option value="hin">Hindi</option>
+          <option value="rus">Russian</option>
+          <option value="chi_sim">Chinese (Simplified)</option>
+        </select>
+      </div>
+      <div>
+        <label for="ocrMode">OCR mode</label>
+        <select id="ocrMode">
+          <option value="auto">Auto (only pages without text)</option>
+          <option value="force">Always OCR</option>
+          <option value="off">Never OCR</option>
+        </select>
+      </div>
+    </div>
+    <div style="margin-top:16px">
+      <label>Target languages (select one or more)</label>
+      <div class="langs" id="langs"></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div id="drop" class="drop">
+      <strong>Click or drop a PDF here</strong>
+      <div id="fileName" style="margin-top:6px;font-size:14px"></div>
+    </div>
+    <input id="file" type="file" accept="application/pdf" class="hidden">
+    <div class="row">
+      <button id="start">Translate</button>
+      <span id="status" style="font-size:14px;color:var(--muted)"></span>
+    </div>
+    <div class="bar"><div id="bar"></div></div>
+    <div id="log">Ready.</div>
+  </section>
+
+  <section class="card hidden" id="results">
+    <div class="tabs" id="tabs"></div>
+    <div class="row">
+      <button class="secondary" id="dlLang">Download this language (.txt)</button>
+      <button class="secondary" id="dlAll">Download all languages (.txt)</button>
+      <button class="secondary" id="printBtn">Print / Save as PDF</button>
+    </div>
+    <div id="pages"></div>
+  </section>
+</main>
+
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+
+const $ = id => document.getElementById(id);
+
+// OCR/source language codes -> MyMemory codes
+const SOURCE_CODES = {
+  eng: "en-GB", ara: "ar-SA", urd: "ur-PK", fra: "fr-FR", deu: "de-DE",
+  spa: "es-ES", hin: "hi-IN", rus: "ru-RU", chi_sim: "zh-CN"
+};
+
+// Display names -> MyMemory target codes
+const TARGET_CODES = {
+  "Arabic": "ar-SA", "Urdu": "ur-PK", "French": "fr-FR", "Spanish": "es-ES",
+  "German": "de-DE", "Chinese (Simplified)": "zh-CN", "Hindi": "hi-IN",
+  "Russian": "ru-RU", "Turkish": "tr-TR", "Japanese": "ja-JP",
+  "Portuguese": "pt-PT", "Italian": "it-IT", "English": "en-GB"
+};
+const RTL_LANGS = ["Arabic", "Urdu"];
+const MYMEMORY_CHUNK = 450; // MyMemory accepts up to 500 bytes per request
+
+let pdfFile = null;
+let results = {};
+let ocrWorker = null;
+let ocrWorkerLang = null;
+let currentLang = null;
+
+/* ---------- UI setup ---------- */
+Object.keys(TARGET_CODES).forEach((lang, i) => {
+  const lab = document.createElement("label");
+  lab.className = "chip";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.value = lang;
+  cb.checked = i === 0;
+  lab.append(cb, lang);
+  $("langs").append(lab);
+});
+
+const drop = $("drop");
+const fileIn = $("file");
+drop.onclick = () => fileIn.click();
+["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("hover"); }));
+["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("hover"); }));
+drop.addEventListener("drop", e => setFile(e.dataTransfer.files[0]));
+fileIn.onchange = () => setFile(fileIn.files[0]);
+
+function setFile(f) {
+  if (!f) return;
+  if (!f.name.toLowerCase().endsWith(".pdf")) { alert("Please choose a PDF file."); return; }
+  pdfFile = f;
+  $("fileName").textContent = `${f.name} (${(f.size / 1048576).toFixed(2)} MB)`;
+}
+
+function log(msg) {
+  const el = $("log");
+  el.textContent += `[${new Date().toLocaleTimeString()}] ${msg}\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(msg) { $("status").textContent = msg; }
+
+/* ---------- PDF helpers ---------- */
+async function pageText(pdf, n) {
+  const page = await pdf.getPage(n);
+  const content = await page.getTextContent();
+  const lines = [];
+  let cur = null, curY = null;
+  for (const it of content.items) {
+    if (!("str" in it)) continue;
+    const y = Math.round(it.transform[5]);
+    if (cur === null || Math.abs(y - curY) > 2) {
+      if (cur !== null) lines.push(cur.trim());
+      cur = "";
+      curY = y;
+    }
+    cur += it.str + (it.hasEOL ? "" : " ");
+  }
+  if (cur !== null) lines.push(cur.trim());
+  return lines.filter(Boolean).join("\n");
+}
+
+async function renderPage(pdf, n) {
+  const page = await pdf.getPage(n);
+  const vp = page.getViewport({ scale: 2 });
+  const canvas = document.createElement("canvas");
+  canvas.width = vp.width;
+  canvas.height = vp.height;
+  await page.render({ canvasContext: canvas.getContext("2d"), viewport: vp }).promise;
+  return canvas;
+}
+
+/* ---------- OCR ---------- */
+async function getOcr(lang) {
+  if (ocrWorker && ocrWorkerLang === lang) return ocrWorker;
+  if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; }
+  log(`Loading OCR engine for "${lang}" (first run downloads language data)...`);
+  ocrWorker = await Tesseract.createWorker(lang, 1);
+  ocrWorkerLang = lang;
+  return ocrWorker;
+}
+
+async function ocrPage(pdf, n, lang) {
+  const canvas = await renderPage(pdf, n);
+  const worker = await getOcr(lang);
+  const { data } = await worker.recognize(canvas);
+  return data.text.trim();
+}
+
+/* ---------- Translation (free MyMemory service, called from the visitor's browser) ---------- */
+function splitText(text, max = MYMEMORY_CHUNK) {
+  const pieces = [];
+  for (const line of text.split("\n")) {
+    if (line.length <= max) { pieces.push(line); continue; }
+    let cur = "";
+    for (const word of line.split(" ")) {
+      if ((cur + " " + word).trim().length > max) {
+        pieces.push(cur.trim());
+        cur = word;
+      } else {
+        cur += " " + word;
+      }
+    }
+    if (cur.trim()) pieces.push(cur.trim());
+  }
+  const chunks = [];
+  let buf = "";
+  for (const p of pieces) {
+    if (buf && (buf + "\n" + p).length > max) { chunks.push(buf); buf = p; }
+    else buf = buf ? buf + "\n" + p : p;
+  }
+  if (buf) chunks.push(buf);
+  return chunks;
+}
+
+async function myMemory(text, langpair) {
+  const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) +
+              "&langpair=" + encodeURIComponent(langpair);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Translation service error " + res.status);
+  const data = await res.json();
+  if (String(data.responseStatus) !== "200") {
+    throw new Error(data.responseDetails || "Translation failed. The free daily limit may have been reached.");
+  }
+  return data.responseData.translatedText;
+}
+
+async function translate(text, lang, ocrLang) {
+  const source = SOURCE_CODES[ocrLang.split("+")[0]] || "en-GB";
+  const target = TARGET_CODES[lang];
+  const out = [];
+  for (const chunk of splitText(text)) {
+    out.push(chunk.trim() ? await myMemory(chunk, `${source}|${target}`) : "");
+  }
+  return out.join("\n");
+}
+
+/* ---------- Main pipeline ---------- */
+$("start").onclick = run;
+
+async function run() {
+  if (!pdfFile) return alert("Choose a PDF first.");
+  const langs = [...document.querySelectorAll("#langs input:checked")].map(i => i.value);
+  if (!langs.length) return alert("Select at least one target language.");
+
+  $("start").disabled = true;
+  results = {};
+  $("results").classList.add("hidden");
+  setStatus("Working...");
+
+  let total = 0, done = 0;
+  const step = () => { done++; $("bar").style.width = Math.round((done / total) * 100) + "%"; };
+
+  try {
+    const pdf = await pdfjsLib.getDocument({ data: await pdfFile.arrayBuffer() }).promise;
+    const n = pdf.numPages;
+    total = n + n * langs.length;
+    log(`Opened "${pdfFile.name}" (${n} page${n > 1 ? "s" : ""}).`);
+
+    // Step 1: extract text, OCR where needed
+    const mode = $("ocrMode").value;
+    const ocrLang = $("ocrLang").value;
+    const pages = [];
+    for (let i = 1; i <= n; i++) {
+      let text = await pageText(pdf, i);
+      let method = "text";
+      const needsOcr = mode === "force" || (mode === "auto" && text.replace(/\s/g, "").length < 30);
+      if (needsOcr && mode !== "off") {
+        log(`Page ${i}: running OCR...`);
+        text = await ocrPage(pdf, i, ocrLang);
+        method = "OCR";
+      }
+      pages.push({ page: i, text, method });
+      step();
+      setStatus(`Extracted page ${i}/${n}`);
+    }
+    if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; ocrWorkerLang = null; }
+
+    // Step 2: translate into each language
+    for (const lang of langs) {
+      results[lang] = [];
+      for (const p of pages) {
+        log(`Translating page ${p.page}/${n} into ${lang}...`);
+        setStatus(`${lang}: page ${p.page}/${n}`);
+        const translated = p.text
+          ? await translate(p.text, lang, ocrLang)
+          : "(no text found on this page)";
+        results[lang].push({ ...p, translated });
+        step();
+      }
+    }
+
+    renderResults(langs);
+    log("Done.");
+    setStatus("Finished");
+  } catch (e) {
+    log("Error: " + e.message);
+    setStatus("Failed");
+    alert("Something went wrong: " + e.message);
+  } finally {
+    $("start").disabled = false;
+  }
+}
+
+/* ---------- Results ---------- */
+function renderResults(langs) {
+  const tabs = $("tabs");
+  tabs.innerHTML = "";
+  langs.forEach(lang => {
+    const b = document.createElement("button");
+    b.textContent = lang;
+    b.className = "secondary";
+    b.dataset.lang = lang;
+    b.onclick = () => showLang(lang);
+    tabs.append(b);
+  });
+  $("results").classList.remove("hidden");
+  showLang(langs[0]);
+}
+
+function showLang(lang) {
+  currentLang = lang;
+  document.querySelectorAll("#tabs button").forEach(b =>
+    b.classList.toggle("secondary", b.dataset.lang !== lang));
+
+  const box = $("pages");
+  box.innerHTML = "";
+  const rtl = RTL_LANGS.includes(lang);
+
+  results[lang].forEach(p => {
+    const sec = document.createElement("div");
+    sec.className = "page";
+
+    const h = document.createElement("h3");
+    h.textContent = `Page ${p.page}`;
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = p.method;
+    h.append(badge);
+
+    const cols = document.createElement("div");
+    cols.className = "cols";
+
+    const colA = document.createElement("div");
+    colA.className = "col";
+    colA.innerHTML = "<h4>Original</h4>";
+    const orig = document.createElement("div");
+    orig.className = "txt";
+    orig.textContent = p.text || "(no text)";
+    colA.append(orig);
+
+    const colB = document.createElement("div");
+    colB.className = "col";
+    colB.innerHTML = `<h4>Translation (${lang})</h4>`;
+    const tr = document.createElement("div");
+    tr.className = "txt" + (rtl ? " rtl" : "");
+    tr.textContent = p.translated;
+    colB.append(tr);
+
+    cols.append(colA, colB);
+    sec.append(h, cols);
+    box.append(sec);
+  });
+}
+
+function download(name, content) {
+  const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function baseName() {
+  return (pdfFile ? pdfFile.name : "document").replace(/\.pdf$/i, "");
+}
+
+function formatLang(lang) {
+  return results[lang]
+    .map(p => `--- Page ${p.page} (${p.method}) ---\n${p.translated}`)
+    .join("\n\n");
+}
+
+$("dlLang").onclick = () => {
+  if (currentLang) download(`${baseName()}_${currentLang}.txt`, formatLang(currentLang));
+};
+
+$("dlAll").onclick = () => {
+  const all = Object.keys(results)
+    .map(lang => `=== ${lang} ===\n\n${formatLang(lang)}`)
+    .join("\n\n\n");
+  download(`${baseName()}_all_translations.txt`, all);
+};
+
+$("printBtn").onclick = () => window.print();
+</script>
+</body>
+</html>
