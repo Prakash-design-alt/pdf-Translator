@@ -3,12 +3,21 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PDF Translator (Layout Preserved)</title>
+<title>PDF Translator (Layout Preserved - Unlimited Local Translation)</title>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Noto+Sans&family=Noto+Sans+Arabic&family=Noto+Sans+SC&family=Noto+Sans+JP&family=Noto+Sans+Devanagari&display=swap" rel="stylesheet">
+<!-- PDF & OCR Libraries -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/tesseract.js/5.1.1/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<!-- Transformers.js for Unlimited Local Neural Translation -->
+<script type="module">
+  import { pipeline, env } from 'https://cdn.jsdelivr.net/npm/@xenova/transformers@2.14.0';
+  window.Transformers = { pipeline, env };
+  // Allow loading models directly in browser via CDN
+  env.allowLocalModels = false;
+  env.useBrowserCache = true;
+</script>
 <style>
 :root{--bg:#f5f6f8;--card:#fff;--text:#1d2330;--muted:#6b7280;--accent:#2563eb;--border:#e3e6ec}
 *{box-sizing:border-box}
@@ -20,7 +29,7 @@ main{max-width:1000px;margin:24px auto;padding:0 16px;display:grid;gap:16px}
 .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
 .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
 label{font-size:13px;color:var(--muted);display:block;margin-bottom:4px}
-select{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff}
+select, input{width:100%;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:14px;background:#fff}
 .drop{border:2px dashed var(--border);border-radius:12px;padding:28px;text-align:center;cursor:pointer;color:var(--muted)}
 .drop.hover{border-color:var(--accent);background:#eff6ff}
 .drop strong{color:var(--text)}
@@ -37,17 +46,18 @@ button.secondary{background:#fff;color:var(--text);border:1px solid var(--border
 iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;margin-top:12px}
 .note{font-size:13px;color:var(--muted);margin-top:10px}
 .overlay{position:fixed;inset:0;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;z-index:999}
-.loadbox{background:#fff;border-radius:12px;padding:28px 32px;width:min(380px,90vw);text-align:center}
+.loadbox{background:#fff;border-radius:12px;padding:28px 32px;width:min(420px,90vw);text-align:center}
 .spinner{width:46px;height:46px;border:4px solid #e3e6ec;border-top-color:var(--accent);border-radius:50%;margin:0 auto 14px;animation:spin .8s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-#loadText{font-size:14px;color:var(--text);margin-bottom:12px;min-height:20px}
+#loadText{font-size:14px;color:var(--text);margin-bottom:12px;min-height:20px;word-break:break-word}
 .footer{margin-top:24px;padding:18px 16px;text-align:center;font-size:13px;color:var(--muted);border-top:1px solid var(--border);background:var(--card)}
+.badge{display:inline-block;background:#dbeafe;color:#1e40af;font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px;margin-left:6px}
 </style>
 </head>
 <body>
 <header>
-  <h1>PDF Translator (Layout Preserved)</h1>
-  <p>Translates the text inside your PDF and keeps the original page layout, images, and tables. Scanned pages are read with OCR automatically.</p>
+  <h1>PDF Translator <span class="badge">Unlimited Local AI</span></h1>
+  <p>Translates PDFs while preserving layout, tables, and images. Powered by client-side browser neural translation (no daily API limits).</p>
 </header>
 
 <main>
@@ -56,15 +66,15 @@ iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;
       <div>
         <label for="ocrLang">Language of the PDF</label>
         <select id="ocrLang">
-          <option value="eng">English</option>
-          <option value="ara">Arabic</option>
-          <option value="urd">Urdu</option>
-          <option value="fra">French</option>
-          <option value="deu">German</option>
-          <option value="spa">Spanish</option>
-          <option value="hin">Hindi</option>
-          <option value="rus">Russian</option>
-          <option value="chi_sim">Chinese (Simplified)</option>
+          <option value="en">English</option>
+          <option value="ar">Arabic</option>
+          <option value="ur">Urdu</option>
+          <option value="fr">French</option>
+          <option value="de">German</option>
+          <option value="es">Spanish</option>
+          <option value="hi">Hindi</option>
+          <option value="ru">Russian</option>
+          <option value="zh">Chinese (Simplified)</option>
         </select>
       </div>
       <div>
@@ -89,23 +99,22 @@ iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;
     </div>
     <input id="file" type="file" accept="application/pdf" class="hidden">
     <div class="row">
-      <button id="start">Translate PDF</button>
+      <button id="start">Translate PDF (Unlimited)</button>
       <span id="status" style="font-size:14px;color:var(--muted)"></span>
     </div>
   </section>
 
   <section class="card hidden" id="results">
     <div class="row" id="downloads"></div>
-    <p class="note">Preview of the translated PDF:</p>
+    <p class="note" id="previewNote"></p>
     <div class="row" id="previewTabs"></div>
-    <iframe id="preview"></iframe>
   </section>
 </main>
 
 <div id="loading" class="overlay hidden">
   <div class="loadbox">
     <div class="spinner"></div>
-    <div id="loadText">Working...</div>
+    <div id="loadText">Initializing AI model...</div>
     <div class="bar"><div id="bar"></div></div>
   </div>
 </div>
@@ -123,36 +132,47 @@ const { jsPDF } = window.jspdf;
 
 const $ = id => document.getElementById(id);
 
-// OCR/source language codes -> MyMemory codes
-const SOURCE_CODES = {
-  eng: "en-GB", ara: "ar-SA", urd: "ur-PK", fra: "fr-FR", deu: "de-DE",
-  spa: "es-ES", hin: "hi-IN", rus: "ru-RU", chi_sim: "zh-CN"
+// Language codes mapping for Tesseract OCR and M2M100 Model
+const LANG_MAP = {
+  "en": { name: "English", tesseract: "eng", m2m: "en" },
+  "ar": { name: "Arabic", tesseract: "ara", m2m: "ar" },
+  "ur": { name: "Urdu", tesseract: "urd", m2m: "ur" },
+  "fr": { name: "French", tesseract: "fra", m2m: "fr" },
+  "de": { name: "German", tesseract: "deu", m2m: "de" },
+  "es": { name: "Spanish", tesseract: "spa", m2m: "es" },
+  "hi": { name: "Hindi", tesseract: "hin", m2m: "hi" },
+  "ru": { name: "Russian", tesseract: "rus", m2m: "ru" },
+  "zh": { name: "Chinese (Simplified)", tesseract: "chi_sim", m2m: "zh" },
+  "tr": { name: "Turkish", tesseract: "tur", m2m: "tr" },
+  "ja": { name: "Japanese", tesseract: "jpn", m2m: "ja" },
+  "pt": { name: "Portuguese", tesseract: "por", m2m: "pt" },
+  "it": { name: "Italian", tesseract: "ita", m2m: "it" }
 };
-// Display names -> MyMemory target codes
-const TARGET_CODES = {
-  "Arabic": "ar-SA", "Urdu": "ur-PK", "French": "fr-FR", "Spanish": "es-ES",
-  "German": "de-DE", "Chinese (Simplified)": "zh-CN", "Hindi": "hi-IN",
-  "Russian": "ru-RU", "Turkish": "tr-TR", "Japanese": "ja-JP",
-  "Portuguese": "pt-PT", "Italian": "it-IT", "English": "en-GB"
-};
-const RTL_LANGS = ["Arabic", "Urdu"];
+
+const RTL_LANGS = ["ar", "ur"];
 const FONT = `"Noto Sans", "Noto Sans Arabic", "Noto Sans SC", "Noto Sans JP", "Noto Sans Devanagari", sans-serif`;
-const MYMEMORY_CHUNK = 450;
 const RENDER_SCALE = 2;
 
 let pdfFile = null;
 let ocrWorker = null;
 let ocrWorkerLang = null;
 
-/* ---------- UI ---------- */
-Object.keys(TARGET_CODES).forEach((lang, i) => {
+// Local Neural Machine Translation Pipeline
+let translationPipeline = null;
+let previewWin = null;
+let failedMsgs = [];
+
+/* ---------- UI Initialization ---------- */
+const targetList = ["ar", "ur", "fr", "es", "de", "zh", "hi", "ru", "tr", "ja", "pt", "it", "en"];
+targetList.forEach((code, i) => {
+  const info = LANG_MAP[code];
   const lab = document.createElement("label");
   lab.className = "chip";
   const cb = document.createElement("input");
   cb.type = "checkbox";
-  cb.value = lang;
+  cb.value = code;
   cb.checked = i === 0;
-  lab.append(cb, lang);
+  lab.append(cb, info.name);
   $("langs").append(lab);
 });
 
@@ -177,7 +197,54 @@ function setStatus(msg) {
   $("loadText").textContent = msg;
 }
 
-/* ---------- Page analysis: find text lines with exact positions ---------- */
+/* ---------- Local Neural Translation Engine ---------- */
+async function getTranslator() {
+  if (translationPipeline) return translationPipeline;
+  setStatus("Loading Local AI Neural Model (~120MB, cached after 1st download)...");
+  
+  // Wait until Transformers library is ready
+  const libStart = Date.now();
+  while (!window.Transformers) {
+    if (Date.now() - libStart > 30000) {
+      throw new Error("The AI library could not load. Check your internet connection and try again.");
+    }
+    await new Promise(r => setTimeout(r, 100));
+  }
+  
+  // Load Xenova/m2m100_418M model for offline / unlimited multilingual translations
+  translationPipeline = await window.Transformers.pipeline(
+    'translation',
+    'Xenova/m2m100_418M',
+    {
+      progress_callback: (p) => {
+        if (p.status === 'progress') {
+          const pct = Math.round(p.progress || 0);
+          setStatus(`Downloading Neural Model (${p.file || 'weights'}): ${pct}%`);
+          $("bar").style.width = pct + "%";
+        }
+      }
+    }
+  );
+  return translationPipeline;
+}
+
+async function translateText(text, srcCode, tgtCode) {
+  if (!/\p{L}/u.test(text)) return text; // Preserve numbers and punctuation
+  try {
+    const translator = await getTranslator();
+    const output = await translator(text, {
+      src_lang: LANG_MAP[srcCode]?.m2m || srcCode,
+      tgt_lang: LANG_MAP[tgtCode]?.m2m || tgtCode
+    });
+    return output[0]?.translation_text || text;
+  } catch (err) {
+    console.error("Local translation error:", err);
+    failedMsgs.push(err.message);
+    return text;
+  }
+}
+
+/* ---------- PDF Text Line Analysis ---------- */
 function textLines(content, vp) {
   const boxes = [];
   for (const it of content.items) {
@@ -228,16 +295,17 @@ async function renderCanvas(page, vp) {
   return canvas;
 }
 
-async function getOcr(lang) {
-  if (ocrWorker && ocrWorkerLang === lang) return ocrWorker;
+async function getOcr(langCode) {
+  const tessLang = LANG_MAP[langCode]?.tesseract || "eng";
+  if (ocrWorker && ocrWorkerLang === tessLang) return ocrWorker;
   if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; }
-  log(`Loading OCR engine for "${lang}" (first run downloads language data)...`);
-  ocrWorker = await Tesseract.createWorker(lang, 1);
-  ocrWorkerLang = lang;
+  log(`Loading OCR engine for "${tessLang}"...`);
+  ocrWorker = await Tesseract.createWorker(tessLang, 1);
+  ocrWorkerLang = tessLang;
   return ocrWorker;
 }
 
-async function analyzePage(pdf, n, mode, ocrLang) {
+async function analyzePage(pdf, n, mode, sourceLangCode) {
   const page = await pdf.getPage(n);
   const vp = page.getViewport({ scale: RENDER_SCALE });
   let lines = textLines(await page.getTextContent(), vp);
@@ -247,7 +315,7 @@ async function analyzePage(pdf, n, mode, ocrLang) {
   if (needsOcr && mode !== "off") {
     log(`Page ${n}: running OCR...`);
     const canvas = await renderCanvas(page, vp);
-    const worker = await getOcr(ocrLang);
+    const worker = await getOcr(sourceLangCode);
     const { data } = await worker.recognize(canvas, {}, { blocks: true });
     lines = ocrLines(data);
     method = "OCR";
@@ -255,63 +323,7 @@ async function analyzePage(pdf, n, mode, ocrLang) {
   return { n, page, vp, lines, method, width: vp.width / RENDER_SCALE, height: vp.height / RENDER_SCALE };
 }
 
-/* ---------- Translation (free MyMemory service, called from the visitor's browser) ---------- */
-function splitText(text, max = MYMEMORY_CHUNK) {
-  const pieces = [];
-  for (const line of text.split("\n")) {
-    if (line.length <= max) { pieces.push(line); continue; }
-    let cur = "";
-    for (const word of line.split(" ")) {
-      if ((cur + " " + word).trim().length > max) { pieces.push(cur.trim()); cur = word; }
-      else cur += " " + word;
-    }
-    if (cur.trim()) pieces.push(cur.trim());
-  }
-  const chunks = [];
-  let buf = "";
-  for (const p of pieces) {
-    if (buf && (buf + "\n" + p).length > max) { chunks.push(buf); buf = p; }
-    else buf = buf ? buf + "\n" + p : p;
-  }
-  if (buf) chunks.push(buf);
-  return chunks;
-}
-
-async function myMemory(text, langpair) {
-  const url = "https://api.mymemory.translated.net/get?q=" + encodeURIComponent(text) +
-              "&langpair=" + encodeURIComponent(langpair);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("Translation service error " + res.status);
-  const data = await res.json();
-  if (String(data.responseStatus) !== "200") {
-    throw new Error(data.responseDetails || "Translation failed. The free daily limit may have been reached.");
-  }
-  return data.responseData.translatedText;
-}
-
-async function translate(text, lang, ocrLang) {
-  if (!/\p{L}/u.test(text)) return text; // numbers and symbols stay as they are
-  const source = SOURCE_CODES[ocrLang.split("+")[0]] || "en-GB";
-  const target = TARGET_CODES[lang];
-  const out = [];
-  for (const chunk of splitText(text)) {
-    out.push(chunk.trim() ? await myMemory(chunk, `${source}|${target}`) : "");
-  }
-  return out.join("\n");
-}
-
-// Run fn over items with a fixed number of parallel workers
-async function mapLimit(items, limit, fn) {
-  let i = 0;
-  await Promise.all(Array.from({ length: limit }, async () => {
-    while (i < items.length) {
-      const idx = i++;
-      await fn(items[idx], idx);
-    }
-  }));
-}
-
-/* ---------- Drawing the translated page ---------- */
+/* ---------- Drawing Translated PDF Pages ---------- */
 function fitText(ctx, text, size, maxW) {
   let s = size;
   ctx.font = `${s}px ${FONT}`;
@@ -323,13 +335,13 @@ function fitText(ctx, text, size, maxW) {
   return s;
 }
 
-async function drawTranslatedPage(P, lang) {
+async function drawTranslatedPage(P, tgtCode) {
   const canvas = await renderCanvas(P.page, P.vp);
   const ctx = canvas.getContext("2d");
-  const rtl = RTL_LANGS.includes(lang);
+  const rtl = RTL_LANGS.includes(tgtCode);
   const pad = 2;
 
-  // 1. Sample the background color behind each line before erasing anything
+  // 1. Sample background behind lines
   const boxes = P.lines.map(L => {
     const x = L.x - pad, y = L.base - L.h * 0.85 - pad;
     const w = L.w + pad * 2, h = L.h * 1.1 + pad * 2;
@@ -337,16 +349,16 @@ async function drawTranslatedPage(P, lang) {
     return { L, x, y, w, h, color: `rgb(${px[0]},${px[1]},${px[2]})` };
   });
 
-  // 2. Erase original text
+  // 2. Erase original text area
   for (const b of boxes) {
     ctx.fillStyle = b.color;
     ctx.fillRect(b.x, b.y, b.w, b.h);
   }
 
-  // 3. Draw translated text in the same place
+  // 3. Draw translated text in original layout coordinates
   ctx.fillStyle = "#111";
   for (const b of boxes) {
-    const text = b.L.tr && b.L.tr[lang] ? b.L.tr[lang] : b.L.text;
+    const text = b.L.tr && b.L.tr[tgtCode] ? b.L.tr[tgtCode] : b.L.text;
     const maxW = Math.max(b.L.w, Math.min(b.L.w * 1.3, canvas.width - b.L.x - 10));
     fitText(ctx, text, b.L.h * 0.9, maxW);
     ctx.direction = rtl ? "rtl" : "ltr";
@@ -364,78 +376,86 @@ async function loadFonts() {
   ].map(f => document.fonts.load(f).catch(() => {})));
 }
 
-/* ---------- Main pipeline ---------- */
+/* ---------- Execution Pipeline ---------- */
 $("start").onclick = run;
 
 async function run() {
-  if (!pdfFile) return alert("Choose a PDF first.");
-  const langs = [...document.querySelectorAll("#langs input:checked")].map(i => i.value);
-  if (!langs.length) return alert("Select at least one target language.");
+  if (!pdfFile) return alert("Choose a PDF file first.");
+  const selectedTargets = [...document.querySelectorAll("#langs input:checked")].map(i => i.value);
+  if (!selectedTargets.length) return alert("Select at least one target language.");
 
-  const sourceNames = { eng: "English", ara: "Arabic", urd: "Urdu", fra: "French", deu: "German",
-    spa: "Spanish", hin: "Hindi", rus: "Russian", chi_sim: "Chinese (Simplified)" };
-  const sourceName = sourceNames[$("ocrLang").value];
-  if (langs.includes(sourceName)) {
-    return alert(`The PDF is set to ${sourceName}, so ${sourceName} can't be a target. ` +
-                 `Untick it, or change "Language of the PDF" to the PDF's real language.`);
+  const sourceLangCode = $("ocrLang").value;
+  if (selectedTargets.includes(sourceLangCode)) {
+    const sourceName = LANG_MAP[sourceLangCode].name;
+    return alert(`The PDF is set to ${sourceName}, so ${sourceName} cannot be a target language. ` +
+                 `Please untick it or change "Language of the PDF".`);
   }
 
   $("start").disabled = true;
   $("results").classList.add("hidden");
   $("loading").classList.remove("hidden");
-  setStatus("Starting...");
+  setStatus("Initializing local translation pipeline...");
   $("downloads").innerHTML = "";
   $("previewTabs").innerHTML = "";
-  $("preview").removeAttribute("src");
-  setStatus("Working...");
+  failedMsgs = [];
+  previewWin = window.open("", "_blank");
+  if (previewWin) {
+    previewWin.document.title = "Translating...";
+    previewWin.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Translating your PDF, please wait...</p>';
+  }
 
   let total = 0, done = 0;
   const step = () => { done++; $("bar").style.width = Math.min(100, Math.round((done / total) * 100)) + "%"; };
 
   try {
     await loadFonts();
+    
+    // Pre-warm local AI model
+    await getTranslator();
+
     const pdf = await pdfjsLib.getDocument({ data: await pdfFile.arrayBuffer() }).promise;
     const n = pdf.numPages;
     const mode = $("ocrMode").value;
-    const ocrLang = $("ocrLang").value;
     log(`Opened "${pdfFile.name}" (${n} page${n > 1 ? "s" : ""}).`);
 
-    // Step 1: find text and positions on every page
+    // Step 1: Analyze text and positions
     const pages = [];
     for (let i = 1; i <= n; i++) {
-      setStatus(`Reading page ${i}/${n}`);
-      pages.push(await analyzePage(pdf, i, mode, ocrLang));
+      setStatus(`Reading PDF structure - Page ${i}/${n}`);
+      pages.push(await analyzePage(pdf, i, mode, sourceLangCode));
       step();
     }
     if (ocrWorker) { await ocrWorker.terminate(); ocrWorker = null; ocrWorkerLang = null; }
 
     const totalLines = pages.reduce((s, p) => s + p.lines.length, 0);
-    total = pages.length + totalLines * langs.length + pages.length * langs.length;
+    total = pages.length + totalLines * selectedTargets.length + pages.length * selectedTargets.length;
     done = pages.length;
 
-    const base = pdfFile.name.replace(/\.pdf$/i, "");
+    const baseName = pdfFile.name.replace(/\.pdf$/i, "");
     const blobs = {};
 
-    for (const lang of langs) {
-      // Step 2: translate every text line, keeping its position
-      log(`Translating into ${lang} (${totalLines} text lines)...`);
-      await mapLimit(
-        pages.flatMap(p => p.lines.map(L => ({ L, p }))),
-        3,
-        async ({ L }) => {
+    for (const tgtCode of selectedTargets) {
+      const langName = LANG_MAP[tgtCode].name;
+      log(`Translating locally into ${langName} (${totalLines} text lines)...`);
+      
+      let lineIndex = 0;
+      for (const p of pages) {
+        for (const L of p.lines) {
+          lineIndex++;
+          setStatus(`Translating ${langName}: Line ${lineIndex}/${totalLines}`);
           L.tr = L.tr || {};
-          L.tr[lang] = await translate(L.text, lang, ocrLang);
+          L.tr[tgtCode] = await translateText(L.text, sourceLangCode, tgtCode);
           step();
         }
-      );
+      }
 
-      // Step 3: draw each page and build the PDF
-      log(`Building ${lang} PDF...`);
+      // Step 3: Draw page layout and export PDF
+      log(`Generating ${langName} PDF...`);
       let doc = null;
       for (let i = 0; i < pages.length; i++) {
         const P = pages[i];
-        setStatus(`${lang}: building page ${P.n}/${pages.length}`);
-        const canvas = await drawTranslatedPage(P, lang);
+        setStatus(`Building ${langName} PDF: Page ${P.n}/${pages.length}`);
+        const canvas = await drawTranslatedPage(P, tgtCode);
         const img = canvas.toDataURL("image/jpeg", 0.92);
         const orient = P.width > P.height ? "landscape" : "portrait";
         if (!doc) doc = new jsPDF({ unit: "pt", format: [P.width, P.height], orientation: orient });
@@ -443,16 +463,19 @@ async function run() {
         doc.addImage(img, "JPEG", 0, 0, P.width, P.height);
         step();
       }
-      blobs[lang] = { blob: doc.output("blob"), name: `${base}_${lang}.pdf` };
+      blobs[langName] = { blob: doc.output("blob"), name: `${baseName}_${tgtCode}.pdf` };
     }
 
     showDownloads(blobs);
-    log("Done. Your translated PDFs are ready.");
+    log("Complete. Translated PDFs ready with zero API limits.");
     setStatus("Finished");
   } catch (e) {
     log("Error: " + e.message);
     setStatus("Failed");
-    alert("Something went wrong: " + e.message);
+    if (previewWin && !previewWin.closed) previewWin.close();
+    $("previewNote").textContent = "Translation failed: " + e.message;
+    $("results").classList.remove("hidden");
+    alert("An error occurred during translation: " + e.message);
   } finally {
     $("start").disabled = false;
     $("loading").classList.add("hidden");
@@ -462,25 +485,36 @@ async function run() {
 function showDownloads(blobs) {
   const dl = $("downloads");
   const tabs = $("previewTabs");
-  Object.entries(blobs).forEach(([lang, { blob, name }]) => {
+  let firstUrl = null;
+  Object.entries(blobs).forEach(([langName, { blob, name }]) => {
     const url = URL.createObjectURL(blob);
+    if (!firstUrl) firstUrl = url;
+
     const a = document.createElement("a");
     a.href = url;
     a.download = name;
-    a.textContent = `Download ${lang} PDF`;
+    a.textContent = `Download ${langName} PDF`;
     a.className = "secondary";
     a.style.cssText = "border:1px solid #e3e6ec;border-radius:8px;padding:10px 18px;color:#1d2330;font-size:14px;text-decoration:none;background:#fff";
     dl.append(a);
 
-    const b = document.createElement("button");
-    b.className = "secondary";
-    b.textContent = lang;
-    b.onclick = () => { $("preview").src = url; };
-    tabs.append(b);
+    const v = document.createElement("button");
+    v.className = "secondary";
+    v.textContent = `View ${langName} PDF`;
+    v.onclick = () => window.open(url, "_blank");
+    tabs.append(v);
   });
   $("results").classList.remove("hidden");
-  const first = Object.values(blobs)[0];
-  if (first) $("preview").src = URL.createObjectURL(first.blob);
+
+  if (previewWin && !previewWin.closed) {
+    previewWin.location.href = firstUrl;
+    $("previewNote").textContent = "Your translated PDF opened in a new tab. Use the buttons below to view other languages.";
+  } else {
+    $("previewNote").textContent = "Click a View button to open your translated PDF in a new tab.";
+  }
+  if (failedMsgs.length) {
+    $("previewNote").textContent += ` Note: ${failedMsgs.length} text part(s) could not be translated and kept their original text. Reason: ${failedMsgs[0]}`;
+  }
 }
 </script>
 </body>
