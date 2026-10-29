@@ -96,8 +96,9 @@ iframe{width:100%;height:700px;border:1px solid var(--border);border-radius:8px;
 
   <section class="card hidden" id="results">
     <div class="row" id="downloads"></div>
-    <p class="note" id="previewNote"></p>
+    <p class="note">Preview of the translated PDF:</p>
     <div class="row" id="previewTabs"></div>
+    <iframe id="preview"></iframe>
   </section>
 </main>
 
@@ -140,8 +141,6 @@ const MYMEMORY_CHUNK = 450;
 const RENDER_SCALE = 2;
 
 let pdfFile = null;
-let previewWin = null;
-let failedMsgs = [];
 let ocrWorker = null;
 let ocrWorkerLang = null;
 
@@ -247,19 +246,11 @@ async function analyzePage(pdf, n, mode, ocrLang) {
   const needsOcr = mode === "force" || (mode === "auto" && textLen < 30);
   if (needsOcr && mode !== "off") {
     log(`Page ${n}: running OCR...`);
-    try {
-      const canvas = await renderCanvas(page, vp);
-      const worker = await getOcr(ocrLang);
-      const { data } = await worker.recognize(canvas, {}, { blocks: true });
-      lines = ocrLines(data);
-      method = "OCR";
-    } catch (err) {
-      console.warn("OCR failed on page", n, err);
-      failedMsgs.push(`page ${n} OCR: ${err.message}`);
-      ocrWorker = null;
-      ocrWorkerLang = null;
-      method = "OCR failed";
-    }
+    const canvas = await renderCanvas(page, vp);
+    const worker = await getOcr(ocrLang);
+    const { data } = await worker.recognize(canvas, {}, { blocks: true });
+    lines = ocrLines(data);
+    method = "OCR";
   }
   return { n, page, vp, lines, method, width: vp.width / RENDER_SCALE, height: vp.height / RENDER_SCALE };
 }
@@ -395,12 +386,7 @@ async function run() {
   setStatus("Starting...");
   $("downloads").innerHTML = "";
   $("previewTabs").innerHTML = "";
-  failedMsgs = [];
-  previewWin = window.open("", "_blank");
-  if (previewWin) {
-    previewWin.document.title = "Translating...";
-    previewWin.document.body.innerHTML = '<p style="font-family:sans-serif;padding:24px">Translating your PDF, please wait...</p>';
-  }
+  $("preview").removeAttribute("src");
   setStatus("Working...");
 
   let total = 0, done = 0;
@@ -438,13 +424,7 @@ async function run() {
         3,
         async ({ L }) => {
           L.tr = L.tr || {};
-          try {
-            L.tr[lang] = await translate(L.text, lang, ocrLang);
-          } catch (err) {
-            console.warn("Kept original text:", L.text, err);
-            failedMsgs.push(err.message);
-            L.tr[lang] = L.text;
-          }
+          L.tr[lang] = await translate(L.text, lang, ocrLang);
           step();
         }
       );
@@ -471,10 +451,7 @@ async function run() {
     setStatus("Finished");
   } catch (e) {
     log("Error: " + e.message);
-    if (previewWin && !previewWin.closed) previewWin.close();
     setStatus("Failed");
-    $("previewNote").textContent = "Translation failed: " + e.message;
-    $("results").classList.remove("hidden");
     alert("Something went wrong: " + e.message);
   } finally {
     $("start").disabled = false;
@@ -485,11 +462,8 @@ async function run() {
 function showDownloads(blobs) {
   const dl = $("downloads");
   const tabs = $("previewTabs");
-  let firstUrl = null;
   Object.entries(blobs).forEach(([lang, { blob, name }]) => {
     const url = URL.createObjectURL(blob);
-    if (!firstUrl) firstUrl = url;
-
     const a = document.createElement("a");
     a.href = url;
     a.download = name;
@@ -498,23 +472,15 @@ function showDownloads(blobs) {
     a.style.cssText = "border:1px solid #e3e6ec;border-radius:8px;padding:10px 18px;color:#1d2330;font-size:14px;text-decoration:none;background:#fff";
     dl.append(a);
 
-    const v = document.createElement("button");
-    v.className = "secondary";
-    v.textContent = `View ${lang} PDF`;
-    v.onclick = () => window.open(url, "_blank");
-    tabs.append(v);
+    const b = document.createElement("button");
+    b.className = "secondary";
+    b.textContent = lang;
+    b.onclick = () => { $("preview").src = url; };
+    tabs.append(b);
   });
   $("results").classList.remove("hidden");
-
-  if (previewWin && !previewWin.closed) {
-    previewWin.location.href = firstUrl;
-    $("previewNote").textContent = "Your translated PDF opened in a new tab. Use the buttons below to view other languages.";
-  } else {
-    $("previewNote").textContent = "Click a View button to open your translated PDF in a new tab.";
-  }
-  if (failedMsgs.length) {
-    $("previewNote").textContent += ` Note: ${failedMsgs.length} text part(s) could not be translated and kept their original text. Reason: ${failedMsgs[0]}`;
-  }
+  const first = Object.values(blobs)[0];
+  if (first) $("preview").src = URL.createObjectURL(first.blob);
 }
 </script>
 </body>
